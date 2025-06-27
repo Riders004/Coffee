@@ -6,230 +6,229 @@ const {
   makeCacheableSignalKeyStore,
   useMultiFileAuthState
 } = require("@whiskeysockets/baileys");
+
 const pino = require("pino");
-const fs = require('fs');
+const fs = require("fs");
 const chalk = require("chalk");
 const path = require("path");
 const Jimp = require("jimp");
 const readline = require("readline");
-const NodeCache = require('node-cache');
+const NodeCache = require("node-cache");
+
 const msgRetryCounterCache = new NodeCache();
-const _0x27adec = {
-  "input": process.stdin,
-  "output": process.stdout
-};
-const rl = readline.createInterface(_0x27adec);
-const question = _0x538f42 => new Promise(_0xfde36f => {
-  if (rl.closed) {
-    _0xfde36f('');
-  } else {
-    rl.question(_0x538f42, _0xfde36f);
-  }
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
 });
+
+const ask = (q) =>
+  new Promise((resolve) => {
+    if (rl.closed) return resolve('');
+    rl.question(q, resolve);
+  });
+
 let store = null;
 global.phoneNumber = null;
 global.countryCode = null;
+
 module.exports = async function startCoffee() {
   try {
     if (!config.auth || !config.sessionFile) {
       console.log("Invalid config in settings.js!");
-      process.exit(0x1);
+      process.exit(1);
     }
-    const _0x5063e8 = config.auth.toLowerCase() === "pairing";
-    const _0x3d1e59 = config.auth.toLowerCase() === 'qr';
-    if (_0x5063e8 && !global.phoneNumber) {
-      for (let _0x48cd6a = 0x0; _0x48cd6a < 0x3; _0x48cd6a++) {
-        let _0x76dd56 = await question(chalk.cyan("Enter your country code (e.g., 91 for India): "));
-        _0x76dd56 = _0x76dd56.trim().replace(/\D/g, '');
-        if (!_0x76dd56 || _0x76dd56.length < 0x1 || _0x76dd56.length > 0x4) {
+
+    const isPairing = config.auth.toLowerCase() === "pairing";
+    const isQR = config.auth.toLowerCase() === "qr";
+
+    // Pairing phone number input
+    if (isPairing && !global.phoneNumber) {
+      for (let i = 0; i < 3; i++) {
+        let code = await ask(chalk.cyan("Enter your country code (e.g., 91 for India): "));
+        code = code.trim().replace(/\D/g, '');
+
+        if (!code || code.length < 1 || code.length > 4) {
           console.log(chalk.redBright("Invalid country code! Try again."));
           continue;
         }
-        global.countryCode = _0x76dd56;
-        let _0x3afe3f = await question(chalk.cyan("Enter your phone number (without country code): "));
-        _0x3afe3f = _0x3afe3f.trim().replace(/\D/g, '');
-        if (!_0x3afe3f || _0x3afe3f.length < 0x6 || _0x3afe3f.length > 0xf) {
+
+        global.countryCode = code;
+
+        let number = await ask(chalk.cyan("Enter your phone number (without country code): "));
+        number = number.trim().replace(/\D/g, '');
+
+        if (!number || number.length < 6 || number.length > 15) {
           console.log(chalk.redBright("Invalid phone number! Try again."));
           continue;
         }
-        global.phoneNumber = '+' + _0x76dd56 + _0x3afe3f;
+
+        global.phoneNumber = '+' + code + number;
         console.log(chalk.green(''));
         break;
       }
+
       if (!global.phoneNumber) {
         console.log(chalk.redBright("Tried 3 times, exiting!"));
-        process.exit(0x1);
+        process.exit(1);
       }
-      if (!rl.closed) {
-        rl.close();
-      }
+
+      if (!rl.closed) rl.close();
     }
-    const {
-      state: _0x5aa693,
-      saveCreds: _0x49b327
-    } = await useMultiFileAuthState(config.sessionFile);
-    const _0x4ce37e = {
-      level: "silent"
-    };
-    store = makeCacheableSignalKeyStore(_0x5aa693.keys, pino(_0x4ce37e));
-    const {
-      version: _0x26c70a,
-      isLatest: _0x473f0b
-    } = await fetchLatestBaileysVersion();
-    console.log("Using WhatsApp v" + _0x26c70a.join('.') + ", isLatest: " + _0x473f0b);
-    const _0x224a1d = {
-      'level': 'silent'
-    };
-    const _0x12d270 = {
-      "creds": _0x5aa693.creds,
-      "keys": store
-    };
-    const _0x571e8e = coffeeConnect({
-      'version': _0x26c70a,
-      'logger': pino(_0x224a1d),
-      'auth': _0x12d270,
-      'patchMessageBeforeSending': _0x589673 => _0x589673,
-      'msgRetryCounterCache': msgRetryCounterCache
+
+    const { state, saveCreds } = await useMultiFileAuthState(config.sessionFile);
+    store = makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }));
+
+    const { version, isLatest } = await fetchLatestBaileysVersion();
+    console.log(`Using WhatsApp v${version.join('.')}, isLatest: ${isLatest}`);
+
+    const socket = coffeeConnect({
+      version,
+      logger: pino({ level: "silent" }),
+      auth: { creds: state.creds, keys: store },
+      patchMessageBeforeSending: msg => msg,
+      msgRetryCounterCache
     });
-    _0x571e8e.ev.on("creds.update", _0x49b327);
-    if (_0x5063e8 && !_0x571e8e.authState.creds.registered) {
-      const _0x2382bb = global.phoneNumber.replace(/[^0-9]/g, '');
+
+    socket.ev.on("creds.update", saveCreds);
+
+    if (isPairing && !socket.authState.creds.registered) {
+      const numberDigits = global.phoneNumber.replace(/\D/g, '');
       setTimeout(async () => {
-        const _0x141456 = await _0x571e8e.requestPairingCode(_0x2382bb);
-        const _0x4bbede = _0x141456.match(/.{1,4}/g)?.['join']('-') || _0x141456;
-        console.log(chalk.greenBright("Your pairing code: "), _0x4bbede);
-      }, 0xbb8);
+        const pairingCode = await socket.requestPairingCode(numberDigits);
+        const formattedCode = pairingCode.match(/.{1,4}/g)?.join("-") || pairingCode;
+        console.log(chalk.greenBright("Your pairing code:"), formattedCode);
+      }, 3000);
     }
-    if (_0x3d1e59) {
-      _0x571e8e.ev.on("connection.update", async _0xfb5fde => {
-        const {
-          qr: _0x13f928
-        } = _0xfb5fde;
-        if (_0x13f928) {
-          console.log(chalk.green("Scan this QR code in WhatsApp: " + _0x13f928));
+
+    if (isQR) {
+      socket.ev.on("connection.update", async ({ qr }) => {
+        if (qr) {
+          console.log(chalk.green("Scan this QR code in WhatsApp:"), qr);
         }
       });
     }
-    _0x571e8e.ev.on("connection.update", async _0x18fd8e => {
-      const {
-        connection: _0x5e3bd4,
-        lastDisconnect: _0x519748
-      } = _0x18fd8e;
-      if (_0x5e3bd4 === "close") {
-        const _0x359036 = _0x519748?.["error"]?.["output"]?.["statusCode"] || 0x0;
-        const _0x1520d6 = [DisconnectReason.connectionClosed, DisconnectReason.connectionLost, DisconnectReason.restartRequired, DisconnectReason.timedOut, 0x203];
-        if (_0x359036 === DisconnectReason.badSession) {
-          console.log("Session corrupted, delete and re-authenticate!");
-          await cleanSessionFiles();
-          process.exit(0x1);
-        } else {
-          if (_0x359036 === DisconnectReason.connectionReplaced) {
+
+    socket.ev.on("connection.update", async ({ connection, lastDisconnect }) => {
+      if (connection === "close") {
+        const code = lastDisconnect?.error?.output?.statusCode || 0;
+        const retryCodes = [
+          DisconnectReason.connectionClosed,
+          DisconnectReason.connectionLost,
+          DisconnectReason.restartRequired,
+          DisconnectReason.timedOut,
+          403
+        ];
+
+        switch (code) {
+          case DisconnectReason.badSession:
+            console.log("Session corrupted, delete and re-authenticate!");
+            await cleanSessionFiles();
+            process.exit(1);
+          case DisconnectReason.connectionReplaced:
             console.log("New session opened elsewhere. Close it first!");
             await cleanSessionFiles();
-            process.exit(0x1);
-          } else {
-            if (_0x359036 === DisconnectReason.loggedOut) {
-              console.log("Device logged out. Cleaning session...");
-              await cleanSessionFiles();
-              global.phoneNumber = null;
-              process.exit(0x1);
-            } else if (_0x1520d6.includes(_0x359036)) {
+            process.exit(1);
+          case DisconnectReason.loggedOut:
+            console.log("Device logged out. Cleaning session...");
+            await cleanSessionFiles();
+            global.phoneNumber = null;
+            process.exit(1);
+          default:
+            if (retryCodes.includes(code)) {
               console.log("Connection closed, retrying...");
-              setTimeout(() => startCoffee(), 0x1388);
+              setTimeout(() => startCoffee(), 5000);
             } else {
-              console.log("Unknown error: " + _0x359036);
-              process.exit(0x1);
+              console.log("Unknown error:", code);
+              process.exit(1);
             }
-          }
         }
-      } else {
-        if (_0x5e3bd4 === "open") {
-          const _0x2d9439 = _0x571e8e.user.name || config.BotName || 'Bot';
-          const _0x4cc430 = _0x571e8e.user.id.split(':')[0x0];
-          console.log("==========================");
-          console.log(chalk.cyan("• User Info"));
-          console.log(chalk.cyan("- Name: " + _0x2d9439));
-          console.log(chalk.cyan("- Number: " + _0x4cc430));
-          console.log(chalk.cyan("- Status: Connected"));
-          console.log("==========================");
-          try {
-            const _0x158bac = {
-              "text": "Thanks for using this bot!\nHave a great day!\nㅤㅤㅤㅤㅤㅤㅤㅤㅤ~ Aeon"
-            };
-            await _0x571e8e.sendMessage(_0x4cc430 + '@s.whatsapp.net', _0x158bac);
-          } catch (_0x25108c) {
-            console.error("Failed to send self-message:", _0x25108c);
-          }
-          await setProfilePicture(_0x571e8e);
-          console.log(chalk.greenBright("Profile picture set successfully!"));
-          await _0x571e8e.logout();
-          console.log(chalk.yellowBright("Logged out successfully!"));
-          await cleanSessionFiles();
-          console.log(chalk.greenBright("Done! Exiting now..."));
-          process.exit(0x0);
+      } else if (connection === "open") {
+        const username = socket.user.name || config.BotName || 'Bot';
+        const number = socket.user.id.split(':')[0];
+
+        console.log("==========================");
+        console.log(chalk.cyan("• User Info"));
+        console.log(chalk.cyan("- Name: " + username));
+        console.log(chalk.cyan("- Number: " + number));
+        console.log(chalk.cyan("- Status: Connected"));
+        console.log("==========================");
+
+        try {
+          await socket.sendMessage(number + '@s.whatsapp.net', {
+            text: "Thanks for using this bot!\nHave a great day!\n~ Aeon"
+          });
+        } catch (err) {
+          console.error("Failed to send self-message:", err);
         }
+
+        await setProfilePicture(socket);
+        console.log(chalk.greenBright("Profile picture set successfully!"));
+
+        await socket.logout();
+        console.log(chalk.yellowBright("Logged out successfully!"));
+
+        await cleanSessionFiles();
+        console.log(chalk.greenBright("Done! Exiting now..."));
+        process.exit(0);
       }
     });
-  } catch (_0x3838a5) {
-    console.error("Something went wrong:", _0x3838a5);
-    if (!rl.closed) {
-      rl.close();
-    }
-    process.exit(0x1);
+  } catch (err) {
+    console.error("Something went wrong:", err);
+    if (!rl.closed) rl.close();
+    process.exit(1);
   }
 };
-async function setProfilePicture(_0x3bd8b6) {
+
+async function setProfilePicture(sock) {
   try {
-    if (!fs.existsSync("./profile")) {
+    const profilePath = "./profile";
+    if (!fs.existsSync(profilePath)) {
       console.error("Profile folder not found!");
-      process.exit(0x1);
+      process.exit(1);
     }
-    const _0x563743 = fs.readdirSync("./profile");
-    const _0x494767 = _0x563743.filter(_0x45d66e => ['.jpg', '.jpeg', ".png"].includes(path.extname(_0x45d66e).toLowerCase()));
-    if (_0x494767.length === 0x0) {
+
+    const images = fs.readdirSync(profilePath).filter(file =>
+      [".jpg", ".jpeg", ".png"].includes(path.extname(file).toLowerCase())
+    );
+
+    if (images.length === 0) {
       console.error("No images found in profile folder!");
-      process.exit(0x1);
+      process.exit(1);
     }
-    const _0x1a626f = path.join("./profile", _0x494767[0x0]);
-    console.log(chalk.greenBright("Profile picture selected: " + _0x494767[0x0]));
-    const _0x459a3e = await Jimp.read(_0x1a626f);
-    const _0x3cc31a = _0x459a3e.crop(0x0, 0x0, _0x459a3e.getWidth(), _0x459a3e.getHeight());
-    const _0x6087a = await _0x3cc31a.scaleToFit(0x2d0, 0x2d0);
-    const _0x1356bc = await _0x6087a.getBufferAsync(Jimp.MIME_JPEG);
-    const _0x698f84 = {
-      to: 's.whatsapp.net',
-      type: "set",
-      xmlns: 'w:profile:picture'
-    };
-    const _0x3f5b90 = {
-      type: "image"
-    };
-    const _0xd33475 = {
-      tag: 'picture',
-      "attrs": _0x3f5b90,
-      "content": _0x1356bc
-    };
-    const _0x4a24a4 = {
-      "tag": 'iq',
-      "attrs": _0x698f84,
-      content: [_0xd33475]
-    };
-    await _0x3bd8b6.query(_0x4a24a4);
-  } catch (_0x1c9a5a) {
-    console.error("Error setting profile picture:", _0x1c9a5a);
+
+    const selectedImage = path.join(profilePath, images[0]);
+    console.log(chalk.greenBright("Profile picture selected:"), images[0]);
+
+    const image = await Jimp.read(selectedImage);
+    const resized = await image.crop(0, 0, image.getWidth(), image.getHeight()).scaleToFit(720, 720);
+    const buffer = await resized.getBufferAsync(Jimp.MIME_JPEG);
+
+    await sock.query({
+      tag: 'iq',
+      attrs: {
+        to: 's.whatsapp.net',
+        type: "set",
+        xmlns: 'w:profile:picture'
+      },
+      content: [{
+        tag: 'picture',
+        attrs: { type: "image" },
+        content: buffer
+      }]
+    });
+  } catch (err) {
+    console.error("Error setting profile picture:", err);
   }
 }
-const cleanSessionFiles = async () => {
+
+async function cleanSessionFiles() {
   try {
     if (fs.existsSync("./Session")) {
-      const _0x1889cd = {
-        "recursive": true,
-        "force": true
-      };
-      fs.rmSync("./Session", _0x1889cd);
+      fs.rmSync("./Session", { recursive: true, force: true });
       console.log(chalk.greenBright("Session folder deleted successfully!"));
     }
-  } catch (_0x52c646) {
-    console.error("Error cleaning session files:", _0x52c646);
+  } catch (err) {
+    console.error("Error cleaning session files:", err);
   }
-};
+}
